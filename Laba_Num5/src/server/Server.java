@@ -19,6 +19,8 @@ import database.DBFunctions;
 import database.EntryRoom;
 import database.UserInfo;
 import manager.CommandManager;
+import threads.CommandProxy;
+import threads.CommandTask;
 import useful_staff.ProgramStarter;
 
 public class Server {
@@ -28,8 +30,7 @@ public class Server {
     public static boolean script = false;
     private static boolean first_entry = true;
     public static DBFunctions db = new DBFunctions();
-	public Connection connect = db.connection_to_db("laba7", "postgres", "1234");
-    
+	public static CommandProxy cp = new CommandProxy();
     
     public static void main(String[] args) throws IOException {
     	
@@ -67,8 +68,7 @@ public class Server {
                         socketChannel.configureBlocking(false);
                         socketChannel.register(selector, SelectionKey.OP_READ);
                     }
-                    else if (key.isReadable()) {
-                    	
+                    else if (key.isReadable()) {            	
                     	socketChannel = (SocketChannel) key.channel();
 
                         ByteBuffer buffer = ByteBuffer.allocate(1024);
@@ -87,31 +87,8 @@ public class Server {
                             ObjectInputStream ois = new ObjectInputStream(bis);
                         	Request request = (Request) ois.readObject();
                             UserInfo uf = new UserInfo(connect, request.getUID());
-                            CommandManager cm = new CommandManager(request.getCom(), request.getArgNum(), request.getArgs(), request.getVehicle(), uf);
-                            cm.startCommand();
-                            String reply = cm.getCMS();
-                            boolean flagClient = true;
-                            script = false;
-                            if (request.getCom().equals("exit")){
-                              flagClient = false;
-                              
-                            }
-                            Response response = new Response(reply, flagClient);
-                            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                            ObjectOutputStream oos = new ObjectOutputStream(bos);
-                            oos.writeObject(response);
-                            ByteBuffer response_buffer = ByteBuffer.wrap(bos.toByteArray());
-                            socketChannel.write(response_buffer);
-                            if (!flagClient) {
-                              logs.log("User disconnected: exit command");
-                              usersNum = usersNum - 1;
-                                try {
-                                    socketChannel.close();
-                                } catch (IOException ex) {
-                                  logs.log(ex.toString());
-                                    throw new RuntimeException(ex);
-                                }
-                            }
+                            CommandTask ct = new CommandTask(socketChannel, uf, usersNum, logs, request);
+                            cp.CommandToPool(ct);
                         }
                         
                       //Регистрация пользователя                      
@@ -119,23 +96,26 @@ public class Server {
                         catch (Exception e) {
                         	ByteArrayInputStream bis = new ByteArrayInputStream(myBuffer.toByteBuffer().array());
                             ObjectInputStream ois = new ObjectInputStream(bis);
-                        	UserTransfer ut = (UserTransfer) ois.readObject();
-                            String username = ut.getUsername();
-                            String password = ut.getPassword();
-                            boolean signing = ut.getSigning();
-                            EntryRoom er = new EntryRoom();
-                            UserResponse usresp = er.registry(username, password, signing, connect);
-                            
-                            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                            ObjectOutputStream oos = new ObjectOutputStream(bos);
-                            oos.writeObject(usresp);
-                            ByteBuffer response_buffer = ByteBuffer.wrap(bos.toByteArray());
-                            socketChannel.write(response_buffer);
-                            
+                        	UserTransfer ut;
+							try {
+								ut = (UserTransfer) ois.readObject();
+								 String username = ut.getUsername();
+	                            String password = ut.getPassword();
+	                            boolean signing = ut.getSigning();
+	                            EntryRoom er = new EntryRoom();
+	                            UserResponse usresp = er.registry(username, password, signing, connect);
+	                            
+	                            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+	                            ObjectOutputStream oos = new ObjectOutputStream(bos);
+	                            oos.writeObject(usresp);
+	                            ByteBuffer response_buffer = ByteBuffer.wrap(bos.toByteArray());
+	                            socketChannel.write(response_buffer);
+							} catch (ClassNotFoundException e1) {
+							}                           
                         }   
                     }
                 }
-                } catch (IOException | ClassNotFoundException e) {
+                } catch (IOException e) {
             	try {
 					socketChannel.close();
 		        	logs.log("User disconnected: " + e.toString());
